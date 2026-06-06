@@ -67,7 +67,7 @@ summoner_10_champMastery;win
 
 import pandas as pd
 
-FILENAME = 'input.csv'
+FILENAME = 'output_1780707201.csv'
 
 df = pd.read_csv(FILENAME, delimiter=';')
 

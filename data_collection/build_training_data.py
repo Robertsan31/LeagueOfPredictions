@@ -22,10 +22,10 @@ class LeagueAnalyzer:
     # Full list of queue types at: https://static.developer.riotgames.com/docs/lol/queues.json
     QUEUE_TYPE_RANKED_SOLO = 420
 
-    def __init__(self, config_file="config.ini", api_key=None, server_region='euw1', max_age_days=14, search_depth=3, queue_type=QUEUE_TYPE_RANKED_SOLO, debug_level=DEBUG_LEVEL_INFO):
+    def __init__(self, config_file="config.ini", api_key=None, server_region='asia', max_age_days=14, search_depth=3, queue_type=QUEUE_TYPE_RANKED_SOLO, debug_level=DEBUG_LEVEL_INFO):
         # cutoff creation date during match analysis (to exclude matches in the future)
         self.DEBUG_LEVEL = debug_level
-        self.SERVER_REGION = server_region
+        self.SERVER_REGION = 'asia'
         # Calculate cutoff UNIX timestamp based on max_age_days
         self.MATCHES_MAX_AGE = int(time.mktime((datetime.date.today() - datetime.timedelta(days=max_age_days)).timetuple()))
         self.MATCH_HISTORY_SEARCH_DEPTH = search_depth
@@ -127,14 +127,19 @@ class LeagueAnalyzer:
             for a in self.PLAYER_ATTRIBUTES:
                 champion_performance[a] = 'EMPTY'
                 if self.DEBUG_LEVEL <= self.DEBUG_LEVEL_DEBUG: print('- NO PAST MATCHES FOR THIS SUMMONER -'*2)
-        champion_performance['champMastery'] = self.get_champion_mastery(summoner_data['sid'], summoner_data['champ'])
+        champion_performance['champMastery'] = self.get_champion_mastery(summoner_data['puuid'], summoner_data['champ'])
         return champion_performance
 
 
-    def get_champion_mastery(self, sId, championId):
-        '''Retrieves a summoner's mastery points (proprietary Riot Games metric) for a specific champion'''
-        return self.lol_watcher.champion_mastery.by_summoner_by_champion(self.SERVER_REGION, sId, championId)['championPoints']
-
+    def get_champion_mastery(self, puuid, championId):
+        '''Retrieves a summoner's mastery points for a specific champion'''
+        try:
+            return self.lol_watcher.champion_mastery.by_puuid_by_champion('kr', puuid, championId)['championPoints']
+        except ApiError as err:
+            if err.response.status_code == 404:
+                return 0 # Retorna 0 se o jogador nunca tiver jogado com o campeão
+            raise err
+        
     def get_summoners_and_champ(self, match_id):
         '''Retrieves information about summoners and their champions in a certain
         match Returns a list of dictionaries, each representing one summoner who 
