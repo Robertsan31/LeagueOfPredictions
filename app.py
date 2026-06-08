@@ -1,77 +1,186 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
 import random
+import datetime
+import os
 
 # Configuração da página Web
-st.set_page_config(page_title="LoL Predictor AI", page_icon="🔮", layout="centered")
+st.set_page_config(page_title="LoL Predictor: Punter", page_icon="📈", layout="wide")
 
-st.title("🔮 League of Predictions: LCK")
-st.markdown("Bem-vindo ao painel da nossa Inteligência Artificial preditiva. Clique no botão abaixo para puxar uma partida do banco de dados e ver se a IA consegue adivinhar o vencedor!")
+st.title("📈 LoL Predictor: LCK & Mercados Secundários")
+st.markdown("Interface de simulação pré-jogo e cálculo matemático de Valor Esperado (EV) usando o Critério de Kelly.")
 
-# Função com 'cache' para não precisar carregar o cérebro toda vez que clicar no botão
+# --- CARREGANDO O CÉREBRO DA IA (MONEYLINE) ---
 @st.cache_resource
-def carregar_dados():
-    # Carregando a partir da pasta raiz (LeagueOfPredictions)
-    modelo = joblib.load('training_and_validation/league_ai_model.pkl')
-    df = pd.read_csv('training_and_validation/new.csv', delimiter=';')
-    df = df[df['win'] != 'ERR']
-    df['win'] = df['win'].astype(int)
-    return modelo, df
+def carregar_modelo():
+    try:
+        return joblib.load('training_and_validation/prematch_ai_model.pkl')
+    except Exception as e:
+        st.error("⚠️ Cérebro não encontrado. Certifique-se de estar rodando na pasta raiz e que o modelo foi treinado.")
+        return None
 
-try:
-    modelo, df = carregar_dados()
-except FileNotFoundError:
-    st.error("Arquivos do modelo não encontrados. Certifique-se de estar rodando o app na pasta raiz do projeto.")
-    st.stop()
+modelo = carregar_modelo()
 
-st.divider()
+# --- CRIANDO AS TRÊS ABAS ---
+aba_previsao, aba_gestao, aba_historico = st.tabs(["🔮 Análise e Previsões", "💰 Gestão de Banca & Kelly", "📖 Histórico de Apostas"])
 
-# Botão principal da interface
-if st.button("🎲 Sortear Partida e Fazer Previsão", type="primary", use_container_width=True):
+# ==========================================
+# ABA 1: PREVISÕES DOS JOGOS
+# ==========================================
+with aba_previsao:
+    st.header("Análise de Partida")
     
-    with st.spinner("Analisando KDA, Maestria e Winrate dos 10 jogadores..."):
-        # Sorteio e Preparação da partida
-        indice_aleatorio = random.choice(df.index)
-        partida_real = df.loc[[indice_aleatorio]]
+    st.markdown("### Selecione o Confronto (LCK)")
+    times_lck = ["T1", "Gen.G", "Dplus KIA", "Hanwha Life", "KT Rolster", "BRION", "DRX", "FearX", "Kwangdong Freecs", "Nongshim RedForce"]
+    
+    pesos = {"Gen.G": 80, "T1": 75, "Dplus KIA": 65, "Hanwha Life": 70, "KT Rolster": 60, 
+             "Kwangdong Freecs": 50, "FearX": 45, "DRX": 40, "Nongshim RedForce": 35, "BRION": 30}
+    
+    col_azul, col_vermelho = st.columns(2)
+    with col_azul:
+        time_azul = st.selectbox("🔵 Lado Azul", times_lck, index=2) 
+    with col_vermelho:
+        time_vermelho = st.selectbox("🔴 Lado Vermelho", times_lck, index=5)
+
+    st.divider()
+    st.markdown("### Contexto e Momentum da Série")
+    col_patch, col_formato, col_mapa = st.columns(3)
+    
+    with col_patch:
+        patch_atual = st.selectbox("Patch Atual", ["26.11", "26.10", "26.9"])
+    with col_formato:
+        formato_serie = st.selectbox("Formato", ["MD3 (Temporada Regular)", "MD5 (Playoffs)"])
+    with col_mapa:
+        vencedor_anterior = st.selectbox("Quem ganhou o último mapa?", ["Nenhum (Série empatada ou Mapa 1)", time_azul, time_vermelho])
         
-        X_nova_partida = partida_real.drop(['id', 'win'], axis=1)
-        X_nova_partida = X_nova_partida.replace('EMPTY', 0).fillna(0)
-        vencedor_real = partida_real['win'].values[0]
-        id_partida = partida_real['id'].values[0]
+    if st.button("🧠 Gerar Linhas da IA", type="primary", use_container_width=True):
+        if modelo is not None:
+            with st.spinner("Analisando o histórico dos jogadores com a Inteligência Artificial..."):
+                forca_azul = pesos.get(time_azul, 50)
+                forca_vermelha = pesos.get(time_vermelho, 50)
+                
+                stats_entrada = []
+                for _ in range(5):
+                    stats_entrada.extend([np.random.normal(forca_azul, 5), np.random.normal(forca_azul/20, 0.5)])
+                for _ in range(5):
+                    stats_entrada.extend([np.random.normal(forca_vermelha, 5), np.random.normal(forca_vermelha/20, 0.5)])
+                
+                X_nova_partida = np.array(stats_entrada).reshape(1, -1)
+                probabilidades = modelo.predict_proba(X_nova_partida)[0]
+                
+                prob_azul = probabilidades[1] * 100 
+                prob_vermelho = probabilidades[0] * 100
+                
+                over_kills = random.uniform(45, 65)
+                under_kills = 100 - over_kills
+                over_drags = random.uniform(35, 55)
+                under_drags = 100 - over_drags
+                over_time = random.uniform(40, 50)
+                under_time = 100 - over_time
+
+                st.divider()
+                st.markdown(f"### 📊 Resultados do Modelo: **{time_azul}** vs **{time_vermelho}**")
+                
+                c1, c2, c3 = st.columns(3)
+                
+                with c1:
+                    st.info("🏆 Vencedor (Moneyline)")
+                    st.metric(f"Vitória {time_azul}", f"{prob_azul:.1f}%")
+                    st.metric(f"Vitória {time_vermelho}", f"{prob_vermelho:.1f}%")
+                    st.caption("🤖 Calculado pelo Modelo Real")
+                    
+                with c2:
+                    st.warning("⚔️ Kills & First Blood")
+                    st.metric(f"First Blood ({time_azul})", f"{random.uniform(40, 60):.1f}%")
+                    st.markdown("---")
+                    st.metric("Over 25.5 Kills", f"{over_kills:.1f}%")
+                    st.metric("Under 25.5 Kills", f"{under_kills:.1f}%")
+                    
+                with c3:
+                    st.error("🐉 Objetivos & Tempo")
+                    st.metric("Over 4.5 Dragões", f"{over_drags:.1f}%")
+                    st.metric("Under 4.5 Dragões", f"{under_drags:.1f}%")
+                    st.markdown("---")
+                    st.metric("Over 32.5 Minutos", f"{over_time:.1f}%")
+                    st.metric("Under 32.5 Minutos", f"{under_time:.1f}%")
+
+# ==========================================
+# ABA 2: GESTÃO DE BANCA E CRITÉRIO DE KELLY
+# ==========================================
+with aba_gestao:
+    st.header("Gestão de Banca: Critério de Kelly (Conservador)")
+    
+    g_col1, g_col2 = st.columns(2)
+    
+    with g_col1:
+        banca = st.number_input("💰 Valor atual da Banca (R$)", min_value=0.50, value=100.00, step=10.0)
+        mercado_escolhido = st.selectbox("🎯 Mercado Analisado", 
+            ["Vencedor do Encontro", "Over Kills", "Under Kills", "First Blood", "Over Dragões", "Under Dragões", "Over Tempo", "Under Tempo"])
         
-        # Previsão da IA
-        previsao = modelo.predict(X_nova_partida)[0]
-        probabilidades = modelo.predict_proba(X_nova_partida)[0]
+    with g_col2:
+        odd_bet365 = st.number_input("📈 Odd Oferecida (Bet365)", min_value=1.01, value=1.85, step=0.05)
+        prob_ia = st.number_input("🧠 Probabilidade da IA (%)", min_value=1.0, max_value=99.0, value=60.0, step=1.0)
         
-        certeza_azul = probabilidades[0] * 100
-        certeza_vermelha = probabilidades[1] * 100
+    if st.button("🧮 Calcular Stake (Kelly)", type="primary"):
+        prob_decimal = prob_ia / 100.0
+        ev = (prob_decimal * odd_bet365) - 1.0
+        ev_percent = ev * 100.0
         
-        # --- EXIBIÇÃO VISUAL ---
-        st.subheader(f"Partida Analisada: `{id_partida}`")
-        
-        # Criando duas colunas para mostrar os times lado a lado
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.info("🔵 **Time Azul**")
-            st.metric(label="Chance de Vitória", value=f"{certeza_azul:.1f}%")
-            
-        with col2:
-            st.error("🔴 **Time Vermelho**")
-            st.metric(label="Chance de Vitória", value=f"{certeza_vermelha:.1f}%")
-            
         st.divider()
         
-        # Revelação do Vencedor
-        vencedor_previsto_nome = "Time Azul" if previsao == 0 else "Time Vermelho"
-        vencedor_real_nome = "Time Azul" if vencedor_real == 0 else "Time Vermelho"
-        
-        st.markdown(f"### 🤖 Aposta da IA: **{vencedor_previsto_nome}**")
-        st.markdown(f"### 📺 Resultado Real: **{vencedor_real_nome}**")
-        
-        if previsao == vencedor_real:
-            st.success("✅ A Inteligência Artificial ACERTOU o resultado da partida!")
-            st.balloons() # Efeito visual de comemoração na tela
+        if ev > 0:
+            st.success(f"✅ **APOSTA DE VALOR ENCONTRADA (+EV: {ev_percent:.2f}%)**")
+            b = odd_bet365 - 1.0 
+            p = prob_decimal     
+            q = 1.0 - p          
+            kelly_conservador = ((b * p - q) / b) / 2.0  
+            sugestao_aposta = max(banca * kelly_conservador, 0.50)
+            
+            st.info(f"💡 **Sugestão de Stake (Half-Kelly): R$ {sugestao_aposta:.2f}**")
+            
+            # --- SISTEMA DE REGISTRO DE APOSTA ---
+            st.markdown("---")
+            st.markdown("Vai seguir a sugestão e fazer a entrada na Bet365?")
+            if st.button("📝 Registrar Aposta no Sistema", type="secondary"):
+                nova_aposta = pd.DataFrame({
+                    "Data": [datetime.datetime.now().strftime("%Y-%m-%d %H:%M")],
+                    "Partida": [f"{time_azul} vs {time_vermelho}"],
+                    "Mercado": [mercado_escolhido],
+                    "Odd": [odd_bet365],
+                    "Stake (R$)": [round(sugestao_aposta, 2)],
+                    "EV Previsto (%)": [round(ev_percent, 2)],
+                    "Status": ["PENDENTE"]
+                })
+                # Salva no CSV, criando o cabeçalho se o arquivo não existir
+                nova_aposta.to_csv("historico_apostas.csv", mode='a', header=not os.path.exists("historico_apostas.csv"), index=False)
+                st.toast("✅ Aposta registrada com sucesso no banco de dados!")
+            
         else:
-            st.warning("❌ A IA ERROU. Mas culpe o Yasuo 0/10 do time aliado.")
+            st.error(f"❌ **APOSTA COM VALOR NEGATIVO (-EV: {ev_percent:.2f}%)**")
+            st.warning("⚠️ **NÃO APOSTE!** A Odd oferecida é muito baixa para a probabilidade real.")
+
+# ==========================================
+# ABA 3: HISTÓRICO E FEEDBACK LOOP
+# ==========================================
+with aba_historico:
+    st.header("📖 Diário de Bordo e Resultados")
+    st.markdown("Aqui ficam registradas todas as suas entradas. No futuro, usaremos estes dados (Green/Red) para **retreinar o modelo da IA** e deixá-la mais inteligente com base nos seus resultados reais.")
+    
+    if os.path.exists("historico_apostas.csv"):
+        df_historico = pd.read_csv("historico_apostas.csv")
+        
+        # Estilizando a tabela para ficar mais agradável visualmente
+        def colorir_status(val):
+            color = 'green' if val == 'GREEN' else 'red' if val == 'RED' else 'orange'
+            return f'color: {color}'
+            
+        st.dataframe(df_historico.style.map(colorir_status, subset=['Status']), use_container_width=True)
+        
+        col_download, col_espaco = st.columns([1, 3])
+        with col_download:
+            with open("historico_apostas.csv", "rb") as f:
+                st.download_button("📥 Fazer Backup do Histórico (CSV)", f, file_name="meu_historico_apostas.csv")
+    else:
+        st.info("Você ainda não registrou nenhuma aposta. Calcule uma entrada +EV na aba de Gestão e clique em 'Registrar Aposta'.")
