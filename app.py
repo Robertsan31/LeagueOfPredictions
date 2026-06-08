@@ -12,6 +12,10 @@ st.set_page_config(page_title="LoL Predictor: Punter", page_icon="📈", layout=
 st.title("📈 LoL Predictor: LCK & Mercados Secundários")
 st.markdown("Interface de simulação pré-jogo e cálculo matemático de Valor Esperado (EV) usando o Critério de Kelly.")
 
+# --- INICIANDO A MEMÓRIA DO STREAMLIT ---
+if "resultado_calculo" not in st.session_state:
+    st.session_state.resultado_calculo = None
+
 # --- CARREGANDO O CÉREBRO DA IA (MONEYLINE) ---
 @st.cache_resource
 def carregar_modelo():
@@ -123,42 +127,55 @@ with aba_gestao:
         odd_bet365 = st.number_input("📈 Odd Oferecida (Bet365)", min_value=1.01, value=1.85, step=0.05)
         prob_ia = st.number_input("🧠 Probabilidade da IA (%)", min_value=1.0, max_value=99.0, value=60.0, step=1.0)
         
+    # Quando o botão for clicado, salvamos o cálculo na "memória"
     if st.button("🧮 Calcular Stake (Kelly)", type="primary"):
         prob_decimal = prob_ia / 100.0
         ev = (prob_decimal * odd_bet365) - 1.0
-        ev_percent = ev * 100.0
+        
+        st.session_state.resultado_calculo = {
+            "ev": ev,
+            "ev_percent": ev * 100.0,
+            "prob_decimal": prob_decimal,
+            "odd": odd_bet365,
+            "banca": banca,
+            "mercado": mercado_escolhido
+        }
+        
+    if st.session_state.resultado_calculo is not None:
+        calc = st.session_state.resultado_calculo
         
         st.divider()
-        
-        if ev > 0:
-            st.success(f"✅ **APOSTA DE VALOR ENCONTRADA (+EV: {ev_percent:.2f}%)**")
-            b = odd_bet365 - 1.0 
-            p = prob_decimal     
+        if calc["ev"] > 0:
+            st.success(f"✅ **APOSTA DE VALOR ENCONTRADA (+EV: {calc['ev_percent']:.2f}%)**")
+            b = calc["odd"] - 1.0 
+            p = calc["prob_decimal"]     
             q = 1.0 - p          
             kelly_conservador = ((b * p - q) / b) / 2.0  
-            sugestao_aposta = max(banca * kelly_conservador, 0.50)
+            sugestao_aposta = max(calc["banca"] * kelly_conservador, 0.50)
             
             st.info(f"💡 **Sugestão de Stake (Half-Kelly): R$ {sugestao_aposta:.2f}**")
             
-            # --- SISTEMA DE REGISTRO DE APOSTA ---
             st.markdown("---")
             st.markdown("Vai seguir a sugestão e fazer a entrada na Bet365?")
+            
             if st.button("📝 Registrar Aposta no Sistema", type="secondary"):
                 nova_aposta = pd.DataFrame({
                     "Data": [datetime.datetime.now().strftime("%Y-%m-%d %H:%M")],
                     "Partida": [f"{time_azul} vs {time_vermelho}"],
-                    "Mercado": [mercado_escolhido],
-                    "Odd": [odd_bet365],
+                    "Mercado": [calc["mercado"]],
+                    "Odd": [calc["odd"]],
                     "Stake (R$)": [round(sugestao_aposta, 2)],
-                    "EV Previsto (%)": [round(ev_percent, 2)],
+                    "EV Previsto (%)": [round(calc["ev_percent"], 2)],
                     "Status": ["PENDENTE"]
                 })
-                # Salva no CSV, criando o cabeçalho se o arquivo não existir
                 nova_aposta.to_csv("historico_apostas.csv", mode='a', header=not os.path.exists("historico_apostas.csv"), index=False)
-                st.toast("✅ Aposta registrada com sucesso no banco de dados!")
+                
+                st.toast("✅ Aposta registrada com sucesso!")
+                st.success("Tudo certo! Vá até a aba 'Histórico de Apostas' para conferir.")
+                st.session_state.resultado_calculo = None 
             
         else:
-            st.error(f"❌ **APOSTA COM VALOR NEGATIVO (-EV: {ev_percent:.2f}%)**")
+            st.error(f"❌ **APOSTA COM VALOR NEGATIVO (-EV: {calc['ev_percent']:.2f}%)**")
             st.warning("⚠️ **NÃO APOSTE!** A Odd oferecida é muito baixa para a probabilidade real.")
 
 # ==========================================
@@ -166,21 +183,40 @@ with aba_gestao:
 # ==========================================
 with aba_historico:
     st.header("📖 Diário de Bordo e Resultados")
-    st.markdown("Aqui ficam registradas todas as suas entradas. No futuro, usaremos estes dados (Green/Red) para **retreinar o modelo da IA** e deixá-la mais inteligente com base nos seus resultados reais.")
+    st.markdown("""
+    Aqui ficam registradas todas as suas entradas. 
+    * ✏️ **Para atualizar:** Dê dois cliques na coluna 'Status' e mude para GREEN ou RED.
+    * 🗑️ **Para excluir:** Clique na caixinha à esquerda da linha (para selecioná-la) e aperte a tecla **Delete** do seu teclado.
+    * 💾 **Não esqueça** de clicar no botão "Salvar Alterações" depois!
+    """)
     
     if os.path.exists("historico_apostas.csv"):
         df_historico = pd.read_csv("historico_apostas.csv")
         
-        # Estilizando a tabela para ficar mais agradável visualmente
-        def colorir_status(val):
-            color = 'green' if val == 'GREEN' else 'red' if val == 'RED' else 'orange'
-            return f'color: {color}'
-            
-        st.dataframe(df_historico.style.map(colorir_status, subset=['Status']), use_container_width=True)
+        # O st.data_editor substitui o st.dataframe e permite edição direto na tela!
+        df_editado = st.data_editor(
+            df_historico,
+            use_container_width=True,
+            num_rows="dynamic", # Permite adicionar ou excluir linhas
+            column_config={
+                "Status": st.column_config.SelectboxColumn(
+                    "Status",
+                    help="Atualize o resultado da aposta",
+                    options=["PENDENTE", "GREEN", "RED"],
+                    required=True
+                )
+            }
+        )
         
-        col_download, col_espaco = st.columns([1, 3])
-        with col_download:
+        col1, col2, col3 = st.columns([2, 2, 4])
+        
+        with col1:
+            if st.button("💾 Salvar Alterações", type="primary"):
+                df_editado.to_csv("historico_apostas.csv", index=False)
+                st.success("✅ Histórico atualizado e salvo no arquivo CSV!")
+                
+        with col2:
             with open("historico_apostas.csv", "rb") as f:
-                st.download_button("📥 Fazer Backup do Histórico (CSV)", f, file_name="meu_historico_apostas.csv")
+                st.download_button("📥 Fazer Backup (CSV)", f, file_name="meu_historico_apostas.csv")
     else:
         st.info("Você ainda não registrou nenhuma aposta. Calcule uma entrada +EV na aba de Gestão e clique em 'Registrar Aposta'.")
