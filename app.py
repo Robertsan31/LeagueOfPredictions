@@ -14,11 +14,17 @@ st.set_page_config(page_title="LoL Predictor: Punter", page_icon="📈", layout=
 @st.cache_resource
 def init_connection():
     try:
-        url = st.secrets["https://hytbdxmlcmllpgzpqhuc.supabase.co/rest/v1/"]
-        key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5dGJkeG1sY21sbHBnenBxaHVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExOTUzNzEsImV4cCI6MjA5Njc3MTM3MX0.nZYo54w2rO2xVLbbou7GZT3deafSJbyMF263XkQdrfk"]
+        # Tenta pegar do Render (os.environ) primeiro. Se não achar, tenta do Local (st.secrets)
+        url = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
+        
+        if not url or not key:
+            st.error("⚠️ URL ou Key do Supabase não encontradas no sistema.")
+            return None
+            
         return create_client(url, key)
     except Exception as e:
-        st.error("⚠️ Configuração do Supabase ausente. Configure seus Secrets localmente ou no Render.")
+        st.error(f"⚠️ Erro ao conectar com o banco: {e}")
         return None
 
 supabase = init_connection()
