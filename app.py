@@ -4,10 +4,24 @@ import numpy as np
 import joblib
 import random
 import datetime
-import os
+import uuid
+from supabase import create_client, Client
 
 # Configuração da página Web
 st.set_page_config(page_title="LoL Predictor: Punter", page_icon="📈", layout="wide")
+
+# --- CONEXÃO COM O BANCO DE DADOS (SUPABASE) ---
+@st.cache_resource
+def init_connection():
+    try:
+        url = st.secrets["https://hytbdxmlcmllpgzpqhuc.supabase.co/rest/v1/"]
+        key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5dGJkeG1sY21sbHBnenBxaHVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExOTUzNzEsImV4cCI6MjA5Njc3MTM3MX0.nZYo54w2rO2xVLbbou7GZT3deafSJbyMF263XkQdrfk"]
+        return create_client(url, key)
+    except Exception as e:
+        st.error("⚠️ Configuração do Supabase ausente. Configure seus Secrets localmente ou no Render.")
+        return None
+
+supabase = init_connection()
 
 st.title("📈 LoL Predictor: LCK & Mercados Secundários")
 st.markdown("Interface de simulação pré-jogo e cálculo matemático de Valor Esperado (EV) usando o Critério de Kelly.")
@@ -65,6 +79,7 @@ with aba_previsao:
                 forca_azul = pesos.get(time_azul, 50)
                 forca_vermelha = pesos.get(time_vermelho, 50)
                 
+                # Gerando as 20 colunas de features com base nas forças relativas para alimentar o cérebro
                 stats_entrada = []
                 for _ in range(5):
                     stats_entrada.extend([np.random.normal(forca_azul, 5), np.random.normal(forca_azul/20, 0.5)])
@@ -74,9 +89,11 @@ with aba_previsao:
                 X_nova_partida = np.array(stats_entrada).reshape(1, -1)
                 probabilidades = modelo.predict_proba(X_nova_partida)[0]
                 
+                # Mapeamento do predict_proba correspondente ao dataset de treino
                 prob_azul = probabilidades[1] * 100 
                 prob_vermelho = probabilidades[0] * 100
                 
+                # Mercados Secundários Simulados (Mantidos para o layout até o treinamento dos modelos específicos)
                 over_kills = random.uniform(45, 65)
                 under_kills = 100 - over_kills
                 over_drags = random.uniform(35, 55)
@@ -127,7 +144,6 @@ with aba_gestao:
         odd_bet365 = st.number_input("📈 Odd Oferecida (Bet365)", min_value=1.01, value=1.85, step=0.05)
         prob_ia = st.number_input("🧠 Probabilidade da IA (%)", min_value=1.0, max_value=99.0, value=60.0, step=1.0)
         
-    # Quando o botão for clicado, salvamos o cálculo na "memória"
     if st.button("🧮 Calcular Stake (Kelly)", type="primary"):
         prob_decimal = prob_ia / 100.0
         ev = (prob_decimal * odd_bet365) - 1.0
@@ -158,65 +174,91 @@ with aba_gestao:
             st.markdown("---")
             st.markdown("Vai seguir a sugestão e fazer a entrada na Bet365?")
             
-            if st.button("📝 Registrar Aposta no Sistema", type="secondary"):
-                nova_aposta = pd.DataFrame({
-                    "Data": [datetime.datetime.now().strftime("%Y-%m-%d %H:%M")],
-                    "Partida": [f"{time_azul} vs {time_vermelho}"],
-                    "Mercado": [calc["mercado"]],
-                    "Odd": [calc["odd"]],
-                    "Stake (R$)": [round(sugestao_aposta, 2)],
-                    "EV Previsto (%)": [round(calc["ev_percent"], 2)],
-                    "Status": ["PENDENTE"]
-                })
-                nova_aposta.to_csv("historico_apostas.csv", mode='a', header=not os.path.exists("historico_apostas.csv"), index=False)
-                
-                st.toast("✅ Aposta registrada com sucesso!")
-                st.success("Tudo certo! Vá até a aba 'Histórico de Apostas' para conferir.")
-                st.session_state.resultado_calculo = None 
+            if st.button("📝 Registrar Aposta na Nuvem", type="secondary"):
+                if supabase:
+                    # Preparando payload mapeado para as colunas criadas no banco PostgreSQL
+                    novo_registro = {
+                        "id": str(uuid.uuid4()),
+                        "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "partida": f"{time_azul} vs {time_vermelho}",
+                        "mercado": calc["mercado"],
+                        "odd": float(calc["odd"]),
+                        "stake": float(round(sugestao_aposta, 2)),
+                        "ev_previsto": float(round(calc["ev_percent"], 2)),
+                        "status": "PENDENTE"
+                    }
+                    supabase.table("historico_apostas").insert(novo_registro).execute()
+                    
+                    st.toast("✅ Aposta enviada para o Supabase!")
+                    st.success("Tudo certo! Dados guardados na nuvem com segurança.")
+                    st.session_state.resultado_calculo = None 
+                else:
+                    st.error("Conexão com o Supabase indisponível.")
             
         else:
             st.error(f"❌ **APOSTA COM VALOR NEGATIVO (-EV: {calc['ev_percent']:.2f}%)**")
             st.warning("⚠️ **NÃO APOSTE!** A Odd oferecida é muito baixa para a probabilidade real.")
 
 # ==========================================
-# ABA 3: HISTÓRICO E FEEDBACK LOOP
+# ABA 3: HISTÓRICO INTEGRADO AO SUPABASE
 # ==========================================
 with aba_historico:
-    st.header("📖 Diário de Bordo e Resultados")
+    st.header("📖 Diário de Bordo e Resultados (Sincronizado na Nuvem)")
     st.markdown("""
-    Aqui ficam registradas todas as suas entradas. 
-    * ✏️ **Para atualizar:** Dê dois cliques na coluna 'Status' e mude para GREEN ou RED.
-    * 🗑️ **Para excluir:** Clique na caixinha à esquerda da linha (para selecioná-la) e aperte a tecla **Delete** do seu teclado.
-    * 💾 **Não esqueça** de clicar no botão "Salvar Alterações" depois!
+    Aqui ficam registradas todas as suas entradas diretamente no banco de dados.
+    * ✏️ **Para atualizar:** Dê dois cliques na célula da coluna 'status' e mude para GREEN ou RED.
+    * 🗑️ **Para excluir:** Clique na caixinha à esquerda da linha e aperte a tecla **Delete** no teclado.
+    * 💾 **Sincronização:** Lembre-se de clicar no botão "Sincronizar Alterações com a Nuvem" para persistir as mudanças.
     """)
     
-    if os.path.exists("historico_apostas.csv"):
-        df_historico = pd.read_csv("historico_apostas.csv")
+    if supabase:
+        # Puxa o estado atualizado direto do banco de dados na nuvem
+        resposta = supabase.table("historico_apostas").select("*").execute()
+        dados_nuvem = resposta.data
         
-        # O st.data_editor substitui o st.dataframe e permite edição direto na tela!
-        df_editado = st.data_editor(
-            df_historico,
-            use_container_width=True,
-            num_rows="dynamic", # Permite adicionar ou excluir linhas
-            column_config={
-                "Status": st.column_config.SelectboxColumn(
-                    "Status",
-                    help="Atualize o resultado da aposta",
-                    options=["PENDENTE", "GREEN", "RED"],
-                    required=True
-                )
-            }
-        )
-        
-        col1, col2, col3 = st.columns([2, 2, 4])
-        
-        with col1:
-            if st.button("💾 Salvar Alterações", type="primary"):
-                df_editado.to_csv("historico_apostas.csv", index=False)
-                st.success("✅ Histórico atualizado e salvo no arquivo CSV!")
-                
-        with col2:
-            with open("historico_apostas.csv", "rb") as f:
-                st.download_button("📥 Fazer Backup (CSV)", f, file_name="meu_historico_apostas.csv")
-    else:
-        st.info("Você ainda não registrou nenhuma aposta. Calcule uma entrada +EV na aba de Gestão e clique em 'Registrar Aposta'.")
+        if dados_nuvem:
+            df_historico = pd.DataFrame(dados_nuvem)
+            
+            # Reorganização estética das colunas e ocultação do ID técnico
+            ordem_colunas = ["data", "partida", "mercado", "odd", "stake", "ev_previsto", "status", "id"]
+            df_historico = df_historico[ordem_colunas]
+            
+            df_editado = st.data_editor(
+                df_historico,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "id": None, # Esconde o UUID na interface para o visual ficar limpo
+                    "status": st.column_config.SelectboxColumn(
+                        "status",
+                        options=["PENDENTE", "GREEN", "RED"],
+                        required=True
+                    )
+                }
+            )
+            
+            col_save, col_backup = st.columns([2, 6])
+            with col_save:
+                if st.button("💾 Sincronizar Alterações com a Nuvem", type="primary", use_container_width=True):
+                    with st.spinner("Sincronizando dados..."):
+                        # 1. Identificar e deletar registros removidos pelo data_editor
+                        ids_antigos = set(df_historico['id'])
+                        ids_atuais = set(df_editado['id'])
+                        ids_deletados = ids_antigos - ids_atuais
+                        
+                        for id_del in ids_deletados:
+                            supabase.table('historico_apostas').delete().eq('id', id_del).execute()
+                        
+                        # 2. Executar Upsert dos registros restantes ou modificados
+                        lista_registros = df_editado.to_dict('records')
+                        if lista_registros:
+                            supabase.table('historico_apostas').upsert(lista_registros).execute()
+                            
+                        st.success("✅ Supabase atualizado com sucesso!")
+                        st.rerun()
+            with col_backup:
+                # Permite gerar um arquivo físico local em caso de necessidade de auditoria
+                csv_data = df_editado.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Baixar Cópia Física de Segurança (CSV)", csv_data, file_name="backup_apostas_supabase.csv")
+        else:
+            st.info("Nenhuma aposta registrada no Supabase ainda. Faça simulações e salve dados na Aba 2.")
